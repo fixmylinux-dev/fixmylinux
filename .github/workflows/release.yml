@@ -1,0 +1,48 @@
+name: Release
+
+# Run this from the Actions tab. It tags the current commit with the
+# VERSION from setup.sh and publishes setup.sh with its checksum and a
+# signed record of which commit it was built from.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Lint
+        run: shellcheck setup.sh
+
+      - name: Read version
+        run: |
+          version=$(grep -m1 '^VERSION=' setup.sh | cut -d '"' -f 2)
+          echo "TAG=v$version" >> "$GITHUB_ENV"
+
+      - name: Make sure this version hasn't been released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already released. Bump VERSION in setup.sh first."
+            exit 1
+          fi
+
+      - name: Checksum
+        run: sha256sum setup.sh > SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: setup.sh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" setup.sh SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --generate-notes
