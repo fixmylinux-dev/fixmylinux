@@ -18,6 +18,7 @@ VERSION="0.1.0"
 LOG="$HOME/fixmylinux.log"
 DRY_RUN=0
 WARNINGS=()
+ran=0
 
 if [[ -t 1 ]]; then
   bold=$'\e[1m' dim=$'\e[2m' red=$'\e[31m' green=$'\e[32m' yellow=$'\e[33m' reset=$'\e[0m'
@@ -27,19 +28,35 @@ fi
 
 say()     { printf '%s\n' "$*"; }
 heading() { printf '\n%s%s%s\n' "$bold" "$*" "$reset"; }
-ok()      { printf '%s  ✓ %s%s\n' "$green" "$*" "$reset"; }
+ok() {
+  # In a dry run the commands above it didn't really run, so don't
+  # claim they worked. "Already set up" messages still show.
+  if [[ $DRY_RUN == 1 && $ran == 1 ]]; then
+    ran=0
+    return
+  fi
+  printf '%s  ✓ %s%s\n' "$green" "$*" "$reset"
+}
 warn()    { printf '%s  ! %s%s\n' "$yellow" "$*" "$reset"; WARNINGS+=("$*"); }
 fail()    { printf '%s%s%s\n' "$red" "$*" "$reset"; }
 
 # Print a command, then run it (unless this is a dry run).
 run() {
   printf '%s  $ %s%s\n' "$dim" "$*" "$reset"
-  [[ $DRY_RUN == 1 ]] && return 0
+  if [[ $DRY_RUN == 1 ]]; then
+    ran=1
+    return 0
+  fi
   "$@"
 }
 
 installed() {
   rpm -q "$@" &>/dev/null
+}
+
+# A fingerprint of every installed package, to tell whether anything changed.
+package_list() {
+  rpm -qa | sort | md5sum
 }
 
 # We might be running from `curl | bash`, so stdin is the script itself.
@@ -279,6 +296,9 @@ EOF
     trap 'kill "$keepalive" 2>/dev/null' EXIT
   fi
 
+  local before
+  before=$(package_list)
+
   update_system
   add_rpmfusion
   install_codecs
@@ -300,6 +320,11 @@ EOF
   fi
 
   echo
+  if [[ $(package_list) == "$before" ]]; then
+    say "No packages changed, so there's no need to restart."
+    finish 0
+  fi
+
   say "Restart your computer for everything to take effect."
   if ask "Restart now?"; then
     systemctl reboot
